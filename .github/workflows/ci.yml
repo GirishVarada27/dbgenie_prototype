@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    # Real Postgres + Redis service containers — GitHub Actions runners have
+    # Docker natively, unlike the sandboxed environment this repo was
+    # originally built in, so this is a genuine integration test target
+    # rather than the "no Docker available" workaround used locally
+    # (see backend/tests/postgres-connector.test.ts).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dbgenie_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/dbgenie_test?sslmode=disable
+      REDIS_URL: redis://localhost:6379
+      PORT: 3001
+      BETTER_AUTH_SECRET: ci-test-secret-not-for-production-0000000000000000
+      BETTER_AUTH_URL: http://localhost:3001
+      CORS_ORIGINS: http://localhost:5176
+      SECRETS_ENCRYPTION_KEY: ci-test-secrets-key-not-for-production-000000000
+      AUDIT_DB_ROLE_PASSWORD: ci-test-audit-password-not-for-production-00000
+      # Optional repo secrets — if unset, the integration tests that need
+      # them (rag-retrieval.test.ts) skip cleanly rather than failing.
+      # root-cause-agent.test.ts mocks Gemini entirely and needs neither.
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Migrate test database
+        run: npm run migrate
+
+      - name: Unit + integration tests
+        run: npm test

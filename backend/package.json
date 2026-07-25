@@ -1,0 +1,43 @@
+{
+  "name": "@dbgenie/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cross-env PORT=3001 tsx watch src/index.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "build": "tsc -b",
+    "start": "node dist/index.js",
+    "start:worker": "node dist/worker.js",
+    "db:generate": "drizzle-kit generate",
+    "migrate": "tsx src/scripts/migrate.ts",
+    "seed:runbooks": "tsx src/scripts/seed-runbooks.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@dbgenie/shared": "*",
+    "@google/genai": "^2.13.0",
+    "better-auth": "^1.6.0",
+    "bullmq": "^5.81.1",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.45.2",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.6.0",
+    "ioredis": "^5.11.1",
+    "pg": "^8.16.4",
+    "pino": "^10.3.1",
+    "pino-http": "^11.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/node": "^24.6.2",
+    "@types/pg": "^8.15.6",
+    "cross-env": "^10.1.0",
+    "drizzle-kit": "^0.31.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,74 @@
+services:
+  - type: web
+    name: dbgenie-api
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build -w shared && npm run build -w backend
+    startCommand: npm run start -w backend
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        sync: false
+      - key: BETTER_AUTH_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SECRETS_ENCRYPTION_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: AUDIT_DB_ROLE_PASSWORD
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: dbgenie-redis
+          type: redis
+          property: connectionString
+
+  - type: web
+    name: dbgenie-frontend
+    env: static
+    buildCommand: npm install && npm run build -w shared && npm run build -w frontend
+    staticPublishPath: frontend/dist
+    envVars:
+      # Set to dbgenie-api's public URL. Vite bakes this in at build time,
+      # so changing it requires a redeploy of this service, not just the API.
+      - key: VITE_API_BASE_URL
+        sync: false
+
+  # Stage 2: processes BullMQ jobs (30s metrics collection + anomaly
+  # detection). Stage 3: also runs the Root Cause Agent job triggered by
+  # each new incident. Stage 4: also runs backup-validation jobs (Neon
+  # branch create/compare/teardown).
+  - type: worker
+    name: dbgenie-worker
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build -w shared && npm run build -w backend
+    startCommand: npm run start:worker -w backend
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRETS_ENCRYPTION_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: VOYAGE_API_KEY
+        sync: false
+      - key: NEON_API_KEY
+        sync: false
+      - key: AUDIT_DB_ROLE_PASSWORD
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          name: dbgenie-redis
+          type: redis
+          property: connectionString
+
+  - type: redis
+    name: dbgenie-redis
+    plan: free
+    ipAllowList: []

@@ -1,0 +1,27 @@
+{
+  "name": "dbgenie-prototype",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "shared",
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "predev": "npm run build -w shared",
+    "dev": "concurrently -n server,client,worker -c blue,green,magenta \"npm run dev -w backend\" \"npm run dev -w frontend\" \"npm run dev:worker -w backend\"",
+    "prebuild": "npm run build -w shared",
+    "build": "npm run build -w backend && npm run build -w frontend",
+    "start": "npm run start -w backend",
+    "lint": "oxlint",
+    "pretest": "npm run build -w shared",
+    "test": "npm run test -w backend",
+    "db:generate": "npm run db:generate -w backend",
+    "migrate": "npm run migrate -w backend",
+    "seed:runbooks": "npm run seed:runbooks -w backend"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "oxlint": "^1.0.0"
+  }
+}
