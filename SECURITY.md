@@ -29,6 +29,18 @@ than it actually is — read it before using this with real customer data.
   store — this resets per process and isn't shared across instances, so it
   won't hold if this is ever horizontally scaled to multiple API
   instances. A shared store (Redis-backed) would be needed at that point.
+  Verified live against the Render deployment: the `/api/auth/*` limiter
+  (20 requests/15 min) genuinely returns 429 once exhausted.
+- **Cross-origin session cookies, verified against the live Render
+  deployment**: the API and frontend are separate `*.onrender.com`
+  services (different sites, since `onrender.com` is a public suffix, not
+  a shared parent domain). Better Auth's default `SameSite=Lax` cookie is
+  silently dropped by browsers on cross-site fetch/XHR — confirmed as a
+  real bug during Stage 4 deployment testing, not just a theoretical risk.
+  Fixed by switching to `SameSite=None; Secure` whenever `BETTER_AUTH_URL`
+  is HTTPS (`backend/src/auth.ts`), which keeps local dev's `Lax` cookie
+  untouched over plain HTTP. End-to-end sign-up → cross-origin session →
+  MFA enrollment → 2FA sign-in was re-verified live after the fix.
 
 ## Known limitations (prototype-scoped, not fixed yet)
 
@@ -37,12 +49,16 @@ than it actually is — read it before using this with real customer data.
   was flagged from Stage 2 onward and is the single biggest thing to
   replace (Vault, AWS Secrets Manager, etc.) before handling real customer
   production database credentials at scale.
-- **Cross-origin session cookies between the API and frontend are
-  unverified against a live deployment.** The API and frontend are
-  separate Render services (separate origins). `SameSite`/`Secure` cookie
-  behavior and Better Auth's `trustedOrigins` need to actually be confirmed
-  working across two `*.onrender.com` subdomains in production, not just
-  assumed from local dev where the Vite proxy makes this a non-issue.
+- **The deployed worker runs in the same process as the API**
+  (`RUN_WORKER_IN_PROCESS=true`), not as a separate service — Render's free
+  plan only allows `web_service`, not `background_worker`. This means a
+  worker-side crash (a bad job, an unhandled rejection in a BullMQ
+  processor) takes the API down with it, and heavy job load can compete
+  with the API for the same process's resources. Set that env var to
+  `"false"` and deploy `worker.ts` as its own paid `background_worker`
+  service to restore the isolated two-process architecture the code was
+  originally written for (`backend/src/queue/start-all.ts` is shared by
+  both entrypoints).
 - **The Neon API key used for backup validation is account-wide, not
   scoped to a single project** — Neon API keys aren't project-scoped as of
   this build, so a compromised key can manage any project in the account,

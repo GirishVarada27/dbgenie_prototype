@@ -298,18 +298,36 @@ building the frontend for that target.
 
 ## Deployment
 
-`render.yaml` defines four services (API web service, frontend static
-site, background worker, and managed Redis). `DATABASE_URL`,
+`render.yaml` defines three services: `dbgenie-api` (API web service),
+`dbgenie-frontend` (static site), and `dbgenie-redis` (managed Redis).
+There is no separate background-worker service — Render's free plan only
+allows `web_service`, so `dbgenie-api` runs the BullMQ workers in-process
+via `RUN_WORKER_IN_PROCESS=true` (see `backend/src/queue/start-all.ts`,
+shared by both `index.ts` and the standalone `worker.ts` entrypoint used
+for local dev / a paid two-process deployment). `DATABASE_URL`,
 `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `CORS_ORIGINS`,
 `SECRETS_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `VOYAGE_API_KEY`,
 `NEON_API_KEY`, `AUDIT_DB_ROLE_PASSWORD`, and `VITE_API_BASE_URL` are all
 marked `sync: false` and need to be set manually in the Render dashboard
-after the first deploy (`NEON_API_KEY` on the worker only). `REDIS_URL` is
-wired automatically from the `dbgenie-redis` service via `fromService`.
+(or via the Render API) after the first deploy. `REDIS_URL` is wired
+automatically from `dbgenie-redis` when deployed as a Blueprint; deploying
+the services individually (as this build's own deployment did, via direct
+Render API calls) means it has to be set by hand from the Redis service's
+internal connection string instead.
 
-See `SECURITY.md` for the cross-origin session-cookie gap between the API
-and frontend (separate Render services/origins) that should be confirmed
-against the live deployment, plus other known limitations.
+This build is deployed at `https://dbgenie-frontend.onrender.com`
+(frontend) and `https://dbgenie-api.onrender.com` (API) on Render's free
+tier. Sign-up → cross-origin session → MFA enrollment/2FA sign-in →
+org/database onboarding → SQL Optimizer → backup validation → AI chat with
+RAG citations → rate limiting → audit logging were all re-verified live
+against these URLs after deployment, including the cross-origin
+session-cookie fix described in `SECURITY.md` (Better Auth's default
+`SameSite=Lax` cookie doesn't survive a cross-site frontend/API split;
+fixed with `SameSite=None; Secure` when `BETTER_AUTH_URL` is HTTPS). The
+incident → root-cause-agent path specifically depends on organic anomaly
+detection firing against a monitored database and wasn't re-triggered on
+this deployment (it was verified live during Stage 3 development against
+local dev). See `SECURITY.md` for this and other known limitations.
 
 ## Phase 1 status
 
