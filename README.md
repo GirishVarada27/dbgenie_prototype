@@ -1,10 +1,11 @@
-# DBGenie AI — Phase 1 (Stage 3: AI Chat + Root Cause Agent)
+# DBGenie AI — Phase 1 (complete: Stages 1-4)
 
-PostgreSQL-only AI database operations copilot. Stage 1 (auth, data model,
-app shell), Stage 2 (Postgres connector, metrics, anomaly detection, health
-dashboard), and Stage 3 (RAG-grounded AI chat, Root Cause Agent) are
-complete. See `DBGenie_AI_Phase1_Postgres_Project_Document.md` for the full
-phase plan.
+PostgreSQL-only AI database operations copilot. All four Phase-1 stages are
+complete: auth/RBAC/app shell, Postgres connector/metrics/health dashboard,
+RAG-grounded AI chat + Root Cause Agent, and SQL Optimizer + backup
+validation + production hardening. See
+`DBGenie_AI_Phase1_Postgres_Project_Document.md` for the full phase plan
+and `SECURITY.md` for known limitations before using this with real data.
 
 **Deviation from the project doc:** the doc's stack table specifies Claude
 for AI Chat and the Root Cause Agent. This build uses the **Gemini API**
@@ -21,10 +22,13 @@ chat model is used.
 - Background worker: Node.js + BullMQ + TypeScript (separate process/entry point)
 - Database: Neon PostgreSQL (`pgvector` + `pgcrypto` extensions enabled on boot)
 - Job queue: Redis (BullMQ)
-- AI: Gemini API (`@google/genai`) for chat + Root Cause Agent; Voyage AI for RAG embeddings
+- AI: Gemini API (`@google/genai`) for chat, Root Cause Agent, and the SQL Optimizer; Voyage AI for RAG embeddings
+- Backup validation: Neon API (temporary branch create/compare/teardown)
+- Logging: pino (structured JSON, request-id/correlation-id tagged)
 - ORM/migrations: Drizzle ORM (app tables) + Better Auth's own migration runner (auth tables)
 - Auth: Better Auth — email/password + TOTP MFA + organization-scoped RBAC (`owner`/`admin`/`member`)
 - Monorepo: npm workspaces — `shared` (TS types), `backend`, `frontend`
+- CI: GitHub Actions — lint, build, migrate, and test against real Postgres + Redis service containers
 
 ## Prerequisites
 
@@ -33,6 +37,7 @@ chat model is used.
 - A Redis connection string (BullMQ requires a real Redis server — an in-memory mock won't work). Any provider works; use `rediss://` instead of `redis://` if it requires TLS (e.g. Upstash)
 - A Gemini API key ([aistudio.google.com/apikey](https://aistudio.google.com/apikey))
 - A Voyage AI API key ([dash.voyageai.com](https://dash.voyageai.com))
+- A Neon API key ([console.neon.tech/app/settings/api-keys](https://console.neon.tech/app/settings/api-keys)) — only needed to use backup validation
 
 ## Setup
 
@@ -56,9 +61,12 @@ chat model is used.
    - `CORS_ORIGINS` — comma-separated allowed origins; `http://localhost:5176` in dev
    - `REDIS_URL` — used by both the API (enqueues jobs) and the worker (processes them)
    - `SECRETS_ENCRYPTION_KEY` — generate the same way as `BETTER_AUTH_SECRET`; encrypts stored monitored-database credentials (see Secrets storage below)
-   - `GEMINI_API_KEY` — AI Chat + Root Cause Agent
+   - `GEMINI_API_KEY` — AI Chat, Root Cause Agent, SQL Optimizer
    - `GEMINI_MODEL` — optional, defaults to `gemini-flash-latest` (see `ai/gemini.ts` for why not Pro)
    - `VOYAGE_API_KEY` — RAG embeddings for runbook_chunks
+   - `NEON_API_KEY` — backup validation (only needed for instances that set a Neon project ID)
+   - `AUDIT_DB_ROLE_PASSWORD` — generate the same way as `BETTER_AUTH_SECRET`; password for the restricted, append-only `dbgenie_audit_writer` DB role (see Audit log below)
+   - `LOG_LEVEL` — optional, defaults to `info` (pino level)
 
    The frontend doesn't need a `.env` for local dev (Vite proxies `/api` and
    `/health` to the backend — see `frontend/vite.config.ts`). See
@@ -98,11 +106,18 @@ called from **both** the API and worker entry points on every boot, and:
 2. Runs Better Auth's own migrations (user/session/organization/two-factor tables).
 3. Runs Drizzle migrations for app tables (`database_instances`, `metrics`,
    `incidents`, `recommendations`, `runbook_chunks`, `chat_sessions`,
-   `chat_messages`, `secrets`).
+   `chat_messages`, `secrets`, `backup_validations`, `audit_logs`).
+4. Creates (or updates the password on) the restricted `dbgenie_audit_writer`
+   Postgres role and grants it `INSERT`/`SELECT` on `audit_logs` only — see
+   Audit log below.
 
 Because two processes can boot around the same time, the whole sequence
 runs under a Postgres advisory lock (`pg_advisory_lock`) so their migration
 runs serialize instead of racing against each other.
+
+Want to migrate without starting the app (e.g. before running tests
+against a fresh database)? `npm run migrate` does just the steps above and
+exits.
 
 If you change `backend/src/db/schema.ts`, regenerate the Drizzle migration
 SQL before starting the server again:
@@ -172,6 +187,64 @@ right away rather than waiting a full 30s.
   `gemini-flash-latest`; switch it once billing is enabled if Pro's
   stronger reasoning is worth it for the Root Cause Agent specifically.
 
+### SQL Optimizer
+
+`POST /api/orgs/:orgId/database-instances/:id/sql/analyze`
+(`backend/src/routes/database-instances.ts` + `backend/src/ai/sql-optimizer.ts`)
+takes a raw query, runs `EXPLAIN (FORMAT JSON)` (never `ANALYZE` — that
+would actually execute the query) plus a schema/index summary, and asks
+Gemini for a plain-language explanation of the plan's main cost driver, a
+suggestion (a rewritten query *or* index DDL, never both unless clearly
+both are needed), an estimated improvement **range** (never a single
+number — nothing here is benchmarked), and a confidence score. The
+frontend page shows the plan as indented text, the suggestion, and a
+"Copy" button for the DDL — nothing is ever executed server-side.
+
+### Backup validation
+
+Database instances can optionally set a Neon project ID at onboarding
+(`neonProjectId` — only meaningful if that monitored database is itself
+Neon-hosted). `POST .../database-instances/:id/backup-validations`
+enqueues a job (`backend/src/queue/backup-validation-worker.ts`) that:
+
+1. Snapshots approximate row counts from the live source database.
+2. Creates a temporary branch off the project's default branch via the
+   Neon API (`backend/src/neon/client.ts`), waits for it to become ready.
+3. Connects to the branch, runs `ANALYZE` (a brand-new branch has cold
+   planner statistics even though its data is a real copy — without this,
+   every table reads as ~0 rows), then compares its row counts against the
+   snapshot (a tolerance band accounts for concurrent writes between steps
+   1 and 2) plus a basic connectivity smoke test.
+4. Always tears the branch down, pass or fail, and records the result in
+   `backup_validations` (status, per-table comparison, connectivity).
+
+The Databases page shows a "Run backup validation" button and history per
+instance for any instance with a Neon project ID set.
+
+### Rate limiting, structured logging, audit log
+
+- **Rate limiting** (`express-rate-limit`, `backend/src/middleware/rate-limit.ts`):
+  300 req/15min on all `/api` routes, 20 req/15min on `/api/auth/*` and
+  `/api/orgs/:orgId/chat` specifically.
+- **Structured logging** (pino, `backend/src/logger.ts` +
+  `backend/src/http-logger.ts`): every HTTP request gets a request id
+  (generated or echoed from an inbound `x-request-id` header, returned in
+  the response). BullMQ job data carries a `correlationId` — the
+  originating request id for jobs a user directly triggers (backup
+  validation), or the triggering job's own id for jobs triggered by
+  another job (Root Cause Agent, enqueued by the metrics-collection job
+  that detected the anomaly) — so a job's log lines can always be traced
+  back to what caused it.
+- **Audit log** (`audit_logs` table, `backend/src/middleware/audit-log.ts`):
+  records `user_id`/`org_id`/`action`/`target_entity`/before-after
+  state/`ip_address`/timestamp for mutating actions (database instance
+  create/delete, backup validation trigger). **Genuinely append-only, not
+  just documented as such**: writes go through a separate connection pool
+  (`backend/src/db/audit-pool.ts`) authenticated as a dedicated
+  `dbgenie_audit_writer` Postgres role with `UPDATE`/`DELETE` explicitly
+  revoked — verified live that role-based `UPDATE`/`DELETE` attempts
+  return `permission denied for table audit_logs` from Postgres itself.
+
 ### Secrets storage
 
 Monitored-database credentials are stored in a dedicated `secrets` table
@@ -202,6 +275,13 @@ to run — expected, not a hang.
 `backend/tests/root-cause-agent.test.ts` mocks Gemini entirely (injects a
 fake model-caller function) — no API key or network call needed to run it.
 
+**CI** (`.github/workflows/ci.yml`) runs on every push/PR to `main`: lint,
+build, migrate against a real Postgres service container
+(`pgvector/pgvector:pg16`, so `CREATE EXTENSION vector` works) + Redis
+service container, then the full test suite. `GEMINI_API_KEY`/
+`VOYAGE_API_KEY` are optional repo secrets — without them, the tests that
+need real calls to those APIs skip cleanly rather than failing the build.
+
 ## Production
 
 ```
@@ -219,27 +299,26 @@ building the frontend for that target.
 ## Deployment
 
 `render.yaml` defines four services (API web service, frontend static
-site, background worker, and managed Redis) but nothing is deployed yet.
-`DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `CORS_ORIGINS`,
-`SECRETS_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `VOYAGE_API_KEY`, and
-`VITE_API_BASE_URL` are all marked `sync: false` and need to be set
-manually in the Render dashboard after the first deploy. `REDIS_URL` is
+site, background worker, and managed Redis). `DATABASE_URL`,
+`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `CORS_ORIGINS`,
+`SECRETS_ENCRYPTION_KEY`, `GEMINI_API_KEY`, `VOYAGE_API_KEY`,
+`NEON_API_KEY`, `AUDIT_DB_ROLE_PASSWORD`, and `VITE_API_BASE_URL` are all
+marked `sync: false` and need to be set manually in the Render dashboard
+after the first deploy (`NEON_API_KEY` on the worker only). `REDIS_URL` is
 wired automatically from the `dbgenie-redis` service via `fromService`.
 
-**Known gap to revisit before deploying:** the API and frontend are
-separate origins in this topology (different Render services), so the
-Better Auth session cookie is cross-origin between them. Confirm
-`SameSite`/`Secure` cookie settings and `trustedOrigins` actually work
-across two `*.onrender.com` subdomains before relying on this in
-production — this wasn't exercised against a live deployment.
+See `SECURITY.md` for the cross-origin session-cookie gap between the API
+and frontend (separate Render services/origins) that should be confirmed
+against the live deployment, plus other known limitations.
 
-## What's not in Stage 3
+## Phase 1 status
 
-The SQL optimizer and backup validation are out of scope for this stage —
-see the project document for Stage 4. The SQL Optimizer page in the
-frontend is still a placeholder. Capacity forecasting and the Security
-agent are deferred to Phase 2 entirely (see the project document,
-Section 5). Retrieval from past resolved incidents (mentioned in the doc
-alongside runbook retrieval) isn't implemented — a fresh prototype has no
-resolved incidents to retrieve from yet, and the doc frames it as
-conditional ("once any exist").
+All four stages are complete — see the acceptance criteria in
+`DBGenie_AI_Phase1_Postgres_Project_Document.md` for the full end-to-end
+user journey this supports. Deferred to Phase 2 (not started, by design —
+see the project document, Section 5): MongoDB/SQL Server/SAP IQ connectors,
+capacity forecasting, the Security agent, and multi-tenant billing.
+Retrieval from past resolved incidents (mentioned in the doc alongside
+runbook retrieval) isn't implemented — a fresh prototype has no resolved
+incidents to retrieve from yet, and the doc frames it as conditional
+("once any exist").

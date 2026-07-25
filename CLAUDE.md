@@ -12,14 +12,15 @@ what's explicitly deferred. Do not implement a later stage's scope early
 (e.g. don't build metrics collection or AI agents while still on Stage 1
 foundation work) without confirming with the user first.
 
-Currently complete: **Stage 1 (Foundation)** — auth, data model, app shell,
-deployment skeleton; **Stage 2 (Postgres connector, metrics, health
-dashboard)** — `PostgresConnector`, 30s BullMQ metrics collection, anomaly
-detection → incidents, encrypted credential storage, Databases/Health pages;
-and **Stage 3 (AI Chat + Root Cause Agent)** — RAG-grounded streaming chat,
-structured-JSON root-cause diagnosis triggered by every new incident. Stage
-4 (SQL optimizer, backup validation, production hardening) is not yet
-built.
+**All four Phase-1 stages are complete.** Stage 1 (auth, data model, app
+shell); Stage 2 (`PostgresConnector`, metrics, anomaly detection →
+incidents, Databases/Health pages); Stage 3 (RAG-grounded AI chat, Root
+Cause Agent, Gemini + Voyage); Stage 4 (SQL Optimizer, Neon-branch backup
+validation, rate limiting, structured logging, append-only audit log, CI).
+Phase 2 (MongoDB/SQL Server/SAP IQ connectors, capacity forecasting,
+Security agent, multi-tenant billing) hasn't been scoped — don't start it
+without a fresh scoping conversation, per the project doc's own closing
+instruction.
 
 **Stage 3 uses the Gemini API, not Claude**, despite the project doc's
 stack table saying Claude — a mid-build user decision (see README's
@@ -152,16 +153,16 @@ database — the next boot applies it via step 3).
 
 `backend/src/connectors/types.ts` defines a `DatabaseConnector` interface
 (`testConnection`/`collectMetrics`/`runHealthCheck`/`getExplainPlan`/
-`listTablesAndIndexes`/`getRecentQueryActivity`/`close`) deliberately kept
-engine-agnostic so Phase 2 can add `MongoConnector`/etc. without touching
-calling code (worker job processor, routes). `PostgresConnector`
-(`postgres-connector.ts`) is the only implementation. It's backend-only —
-the frontend never imports it, only the higher-level DTOs in
-`@dbgenie/shared` (`Metric`, `Incident`, ...) that the API returns after
-persisting connector output. `getRecentQueryActivity()` was added in Stage
-3 specifically for the Root Cause Agent — `collectMetrics()` stays
-aggregate-only (it's persisted every 30s) rather than widened to carry raw
-query text.
+`listTablesAndIndexes`/`getRecentQueryActivity`/`refreshStatistics`/`close`)
+deliberately kept engine-agnostic so Phase 2 can add `MongoConnector`/etc.
+without touching calling code (worker job processor, routes).
+`PostgresConnector` (`postgres-connector.ts`) is the only implementation.
+It's backend-only — the frontend never imports it, only the higher-level
+DTOs in `@dbgenie/shared` (`Metric`, `Incident`, ...) that the API returns
+after persisting connector output. `getRecentQueryActivity()` was added in
+Stage 3 for the Root Cause Agent; `refreshStatistics()` in Stage 4 for
+backup validation (see below) — `collectMetrics()` itself stays
+aggregate-only (it's persisted every 30s) rather than widened for either.
 
 `collectMetrics()` emits specific named samples
 (`active_connections`, `max_connections`, `longest_running_query_seconds`)
@@ -266,6 +267,109 @@ packing whole paragraphs rather than cutting mid-sentence.
 free-tier rate limit (3 requests/minute without a payment method) makes
 per-file batching fail past a couple of files.
 
+### Every `pg.Pool` needs an `.on("error", ...)` handler — this crashed the API process
+
+node-postgres emits `'error'` on the **Pool** object (not just per-query
+rejections) when an idle client's connection is dropped server-side. With
+no listener, Node treats that as an unhandled exception and kills the
+whole process — this actually happened during Stage 4 testing (a pooled
+connection to a freshly-created Postgres role dropped mid-request, and the
+entire API process died mid-request, taking down every in-flight request
+with it). Every `pg.Pool` this app constructs registers a handler that
+logs and continues: `backend/src/db.ts` (main pool), `backend/src/db/audit-pool.ts`
+(audit writer pool), and `backend/src/connectors/postgres-connector.ts`
+(constructor — this one matters most, since a `PostgresConnector` is
+instantiated fresh per request/job across routes, metrics-worker,
+root-cause-context, and backup-validation-worker, against monitored
+databases this app doesn't control the reliability of). If you add another
+`new pg.Pool(...)` anywhere, it needs this too — there's no shared factory
+enforcing it, it's a convention to remember.
+
+### Backup validation and Neon's "cold" stats on new branches
+
+`backend/src/queue/backup-validation-worker.ts` snapshots row counts from
+the source via `listTablesAndIndexes()` (which reads
+`pg_stat_user_tables.n_live_tup` — see Stage 2's connector), creates a
+temporary Neon branch, and compares. **A brand-new branch reports ~0 rows
+for every table even though the actual data was copied correctly** —
+`pg_stat_user_tables` counts are runtime-collected planner statistics, not
+derived from actual heap contents, and a new compute starts with a cold
+stats collector regardless of the underlying copy-on-write data being
+real. Fixed by calling the connector's `refreshStatistics()` (runs
+`ANALYZE`, no table list — cheap at this app's table sizes) on the branch
+connection immediately after confirming connectivity, before comparing
+counts. Verified live: without the fix, every table read `actualRows: 0`
+and the run failed; with it, all 28 tables matched exactly (including a
+2,000,000-row table). If you see the same "counts read as zero" symptom
+against any freshly-created/freshly-started Postgres target, this is the
+first thing to check.
+
+`backend/src/neon/client.ts` is a minimal fetch wrapper over Neon API v2
+(`getDefaultBranch`/`createBranch`/`waitForOperations`/`listDatabases`/
+`getConnectionUri`/`deleteBranch`) — not a general SDK, just what backup
+validation needs. Branch creation is async on Neon's side;
+`waitForOperations` polls until every operation from the create call
+reports `"finished"` before the worker tries to connect. The branch is
+always torn down in a `finally`, pass or fail.
+
+### Rate limiting, structured logging, correlation ids
+
+`backend/src/middleware/rate-limit.ts` (`express-rate-limit`): a broad
+`generalLimiter` on all `/api` routes, tighter `authLimiter`/`chatLimiter`
+on `/api/auth/*` and `/api/orgs/:orgId/chat` specifically — wired in
+`index.ts`. Uses the default in-memory store, so limits aren't shared
+across multiple instances if this is ever horizontally scaled (documented
+in `SECURITY.md`, not fixed).
+
+`backend/src/logger.ts` (pino) + `backend/src/http-logger.ts` (pino-http,
+mounted first in `index.ts` so every request gets a `req.id`, generated or
+echoed from an inbound `x-request-id` header). BullMQ job data carries an
+optional `correlationId`, populated two different ways depending on what
+actually triggered the job — not literally always an HTTP request id:
+- **Directly HTTP-triggered jobs** (backup validation): the enqueueing
+  route passes `req.id` — see `routes/database-instances.ts`.
+- **Job-triggered jobs** (Root Cause Agent, enqueued by the
+  metrics-collection job that detected the anomaly): `metrics-worker.ts`
+  passes its own BullMQ `job.id` as the correlation id, not any HTTP
+  request — there isn't one, since this only ever fires from the 30s
+  recurring schedule. `jobLogger(name, jobId, bindings)` in `logger.ts` is
+  the shared helper for tagging a job's log lines this way.
+
+Repeatable jobs (metrics-collection) don't carry a `correlationId` at
+all — every 30s tick shares the same job template, so a request id from
+whenever the job was first scheduled would misleadingly appear on every
+future tick. Each tick's own unique BullMQ job id (distinct per occurrence
+even for a repeatable job) is sufficient correlation there.
+
+### Audit log: append-only enforced at the DB role level, not just in code
+
+`audit_logs` writes go through `backend/src/db/audit-pool.ts` — a
+**separate** `pg.Pool` authenticated as `dbgenie_audit_writer`, not the
+main app pool (which connects as the `DATABASE_URL` owner role and could
+otherwise bypass any table-level restriction). `db/init.ts` creates this
+role idempotently (a `DO` block checking `pg_roles`, run after the Drizzle
+migrations so `audit_logs` already exists to grant on) and explicitly
+`REVOKE`s `UPDATE`/`DELETE` after granting `INSERT`/`SELECT` — redundant
+with a fresh role's default-deny, but stated explicitly so intent survives
+even if something else later grants broader access to `PUBLIC`. Verified
+live: attempting `UPDATE`/`DELETE` as that role returns `permission denied
+for table audit_logs` directly from Postgres, not an app-level check that
+a bug could route around.
+
+`DO` blocks can't take bound query parameters, so
+`AUDIT_DB_ROLE_PASSWORD` is interpolated directly into the SQL text in
+`init.ts` — safe only because it's always our own generated hex secret,
+never user input; don't reuse this pattern for anything that could
+originate from a request.
+
+`middleware/audit-log.ts`'s `recordAuditLog()` is called **explicitly**
+from mutating route handlers (database instance create/delete, backup
+validation trigger) with resource-specific before/after state — not a
+blind generic interceptor guessing at request/response bodies, since only
+the route itself knows what a meaningful before/after state is for the
+thing it's mutating. A failure to write an audit row is logged and
+swallowed, never allowed to fail the mutation it's describing.
+
 ### Secrets storage is intentionally not Drizzle-typed
 
 `backend/src/secrets/store.ts` is the only module allowed to touch the
@@ -287,6 +391,26 @@ under that path was the natural extension rather than deriving org id from
 the session server-side. `backend/src/utils/params.ts`'s `reqParam()`
 normalizes Express 5's `string | string[]` route-param typing to a plain
 string; use it for any new `:param` route rather than casting inline.
+`database-instances.ts`'s `loadOrgScopedInstance(orgId, id)` helper (added
+Stage 4 while adding the SQL Optimizer/backup-validation routes, which
+pushed the file past half a dozen `/:id/...` sub-routes) centralizes the
+"does this instance exist AND belong to this org" check every one of them
+needs — reuse it rather than re-inlining the `and(eq(...), eq(...))` query.
+
+### SQL Optimizer is stateless, never executes anything
+
+`routes/database-instances.ts`'s `/:id/sql/analyze` + `ai/sql-optimizer.ts`
+don't persist analyses (no table for them — the doc doesn't ask for one,
+it's a paste-a-query/get-a-suggestion tool). Same "never execute" posture
+as the connector's `getExplainPlan()` it calls: bare `EXPLAIN`, and the
+model's own output is JSON-schema-constrained (`response_format`, same
+pattern as the Root Cause Agent) to `explanation`/`rewrittenQuery`/
+`indexDdl`/`estimatedImprovementRange`/`confidenceScore` — text/DDL
+strings the frontend can copy, never something the server runs.
+`rewrittenQuery`/`indexDdl` are both required strings in the JSON schema
+(empty string = "not applicable") rather than optional keys, since
+optional/nullable fields are more fragile to get right under
+schema-constrained generation than "always present, sometimes empty."
 
 ### Frontend org auto-provisioning
 
