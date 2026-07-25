@@ -80,10 +80,14 @@ Redis server, not a mock).
 ### Two deploy targets, not one process
 
 Unlike a typical single-process Express+Vite app, **the backend does not
-serve the frontend's built files**. `render.yaml` deploys three app
-services: the API web service, the frontend static site, and a background
-worker (`backend/src/worker.ts`) that processes BullMQ jobs — plus a
-managed Redis service the queue runs on. This means:
+serve the frontend's built files**. `render.yaml` deploys the API web
+service and the frontend static site as separate services, plus a managed
+Redis service the BullMQ queue runs on. There is no separate
+background-worker service in this deployment — Render's free plan only
+allows `web_service`, so the API process also runs the BullMQ workers
+in-process (`RUN_WORKER_IN_PROCESS=true` → `queue/start-all.ts`, shared
+with the standalone `backend/src/worker.ts` entrypoint used for local dev
+or a paid two-process deployment). This means:
 - In dev, Vite (`frontend/vite.config.ts`) proxies `/api` and `/health` to
   the backend on `:3001` — same-origin from the browser's perspective.
 - In prod, the frontend calls the API cross-origin, so `frontend/src/api/client.ts`
@@ -91,9 +95,11 @@ managed Redis service the queue runs on. This means:
   in dev, since the proxy handles it) to point at the deployed API's public
   URL. This is a build-time env var for the static site — changing it
   requires rebuilding/redeploying the frontend, not just the API.
-- Known unresolved gap (see README): cross-origin session-cookie behavior
-  between the two `*.onrender.com` subdomains hasn't been verified against a
-  live deployment.
+- Cross-origin session cookies between the two `*.onrender.com` services
+  were a real, confirmed bug — Better Auth's default `SameSite=Lax` cookie
+  is dropped on cross-site fetch/XHR. Fixed in `backend/src/auth.ts` by
+  switching to `SameSite=None; Secure` whenever `BETTER_AUTH_URL` is HTTPS,
+  verified live post-deployment. See `SECURITY.md`.
 
 ### Auth and RBAC ride on Better Auth plugins, not custom tables
 
