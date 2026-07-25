@@ -1,4 +1,10 @@
 services:
+  # Runs the Express API. Also runs the BullMQ workers (metrics collection,
+  # root-cause agent, backup validation) in the same process via
+  # RUN_WORKER_IN_PROCESS=true, since Render's free plan doesn't offer a
+  # separate background-worker service tier. Set that env var to "false" (and
+  # deploy dbgenie-worker as its own paid background_worker service) if this
+  # ever moves to a paid plan.
   - type: web
     name: dbgenie-api
     env: node
@@ -20,8 +26,12 @@ services:
         sync: false
       - key: VOYAGE_API_KEY
         sync: false
+      - key: NEON_API_KEY
+        sync: false
       - key: AUDIT_DB_ROLE_PASSWORD
         sync: false
+      - key: RUN_WORKER_IN_PROCESS
+        value: "true"
       - key: REDIS_URL
         fromService:
           name: dbgenie-redis
@@ -38,35 +48,6 @@ services:
       # so changing it requires a redeploy of this service, not just the API.
       - key: VITE_API_BASE_URL
         sync: false
-
-  # Stage 2: processes BullMQ jobs (30s metrics collection + anomaly
-  # detection). Stage 3: also runs the Root Cause Agent job triggered by
-  # each new incident. Stage 4: also runs backup-validation jobs (Neon
-  # branch create/compare/teardown).
-  - type: worker
-    name: dbgenie-worker
-    env: node
-    plan: free
-    buildCommand: npm install && npm run build -w shared && npm run build -w backend
-    startCommand: npm run start:worker -w backend
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: SECRETS_ENCRYPTION_KEY
-        sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: VOYAGE_API_KEY
-        sync: false
-      - key: NEON_API_KEY
-        sync: false
-      - key: AUDIT_DB_ROLE_PASSWORD
-        sync: false
-      - key: REDIS_URL
-        fromService:
-          name: dbgenie-redis
-          type: redis
-          property: connectionString
 
   - type: redis
     name: dbgenie-redis

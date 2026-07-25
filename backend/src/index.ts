@@ -11,6 +11,7 @@ import healthRouter from "./routes/health.js"
 import databaseInstancesRouter from "./routes/database-instances.js"
 import incidentsRouter from "./routes/incidents.js"
 import chatRouter from "./routes/chat.js"
+import { startAllWorkers } from "./queue/start-all.js"
 
 const trustedOrigins = (process.env.CORS_ORIGINS ?? "http://localhost:5176")
   .split(",")
@@ -51,7 +52,14 @@ app.use((err: unknown, req: express.Request, res: express.Response, _next: expre
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3001
 
 initDb()
-  .then(() => {
+  .then(async () => {
+    // On deployment tiers with no separate background-worker service (e.g.
+    // Render's free plan), the API process also runs the BullMQ workers.
+    // Local dev and any tier that does have a worker service leave this
+    // unset and keep the two-process split (`npm run dev` / `start:worker`).
+    if (process.env.RUN_WORKER_IN_PROCESS === "true") {
+      await startAllWorkers()
+    }
     app.listen(PORT, () => {
       logger.info(`Server listening on port ${PORT}`)
     })
