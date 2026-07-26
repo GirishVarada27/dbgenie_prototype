@@ -9,6 +9,7 @@ import Databases from "./pages/Databases"
 import Health from "./pages/Health"
 import AiChat from "./pages/AiChat"
 import SqlOptimizer from "./pages/SqlOptimizer"
+import Incidents from "./pages/Incidents"
 import NotFound from "./pages/NotFound"
 
 export default function App() {
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/health" element={<Health />} />
         <Route path="/chat" element={<AiChat />} />
         <Route path="/sql-optimizer" element={<SqlOptimizer />} />
+        <Route path="/incidents" element={<Incidents />} />
       </Route>
 
       <Route path="*" element={<NotFound />} />

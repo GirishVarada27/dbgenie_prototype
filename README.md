@@ -1,4 +1,4 @@
-# DBGenie AI — Phase 1 (complete: Stages 1-4)
+# DBGenie AI — Phase 1 (complete: Stages 1-4) + Stage 5
 
 PostgreSQL-only AI database operations copilot. All four Phase-1 stages are
 complete: auth/RBAC/app shell, Postgres connector/metrics/health dashboard,
@@ -6,6 +6,15 @@ RAG-grounded AI chat + Root Cause Agent, and SQL Optimizer + backup
 validation + production hardening. See
 `DBGenie_AI_Phase1_Postgres_Project_Document.md` for the full phase plan
 and `SECURITY.md` for known limitations before using this with real data.
+
+**Stage 5** (a follow-up prompt, not part of the original project doc)
+added a dark "command-center" visual redesign across every page, verified
+and rounded out the AI Chat streaming UX (typing indicator, one automatic
+reconnect), hybrid RAG grounding (general-PostgreSQL-knowledge answers are
+now allowed when retrieval is weak, but always labeled "general guidance"
+rather than presented as cited), and 8 more seeded runbooks (16 total).
+See CLAUDE.md's "Stage 5" section for implementation details, including an
+empirical recalibration of the grounding similarity threshold.
 
 **Deviation from the project doc:** the doc's stack table specifies Claude
 for AI Chat and the Root Cause Agent. This build uses the **Gemini API**

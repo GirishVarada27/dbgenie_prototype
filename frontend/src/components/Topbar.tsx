@@ -1,8 +1,10 @@
 import { useNavigate } from "react-router-dom"
-import { signOut, useSession } from "../lib/auth-client"
+import { authClient, signOut, useSession } from "../lib/auth-client"
+import PulseWaveform from "./PulseWaveform"
 
 export default function Topbar() {
   const { data: session } = useSession()
+  const { data: activeOrg } = authClient.useActiveOrganization()
   const navigate = useNavigate()
 
   async function handleSignOut() {
@@ -11,25 +13,28 @@ export default function Topbar() {
   }
 
   return (
-    <header className="flex h-14 items-center justify-between border-b border-slate-200 bg-white px-6">
-      <div />
-      <div className="flex items-center gap-4 text-sm">
+    <header className="flex h-12 shrink-0 items-center justify-between border-b border-border bg-background px-6">
+      <span className="text-sm font-medium text-text-primary">{activeOrg?.name ?? ""}</span>
+
+      <div className="flex items-center gap-6">
+        <PulseWaveform />
+
         {session?.user && (
-          <>
-            <span className="text-slate-600">{session.user.email}</span>
+          <div className="flex items-center gap-4 text-sm">
+            <span className="text-text-secondary">{session.user.email}</span>
             {!session.user.twoFactorEnabled && (
-              <a href="/mfa/enroll" className="font-medium text-indigo-600 hover:underline">
+              <a href="/mfa/enroll" className="font-medium text-accent hover:underline">
                 Enable MFA
               </a>
             )}
             <button
               type="button"
               onClick={handleSignOut}
-              className="rounded-md border border-slate-300 px-3 py-1.5 text-slate-700 hover:bg-slate-50"
+              className="rounded-md border border-border px-3 py-1.5 text-text-secondary transition-colors hover:border-accent-dim hover:text-text-primary"
             >
               Sign out
             </button>
-          </>
+          </div>
         )}
       </div>
     </header>

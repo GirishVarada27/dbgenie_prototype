@@ -84,23 +84,23 @@ export default function SqlOptimizer() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="mb-1 text-xl font-semibold text-slate-900">SQL Optimizer</h1>
-        <p className="text-sm text-slate-500">
+        <h1 className="mb-1 font-display text-xl font-semibold text-text-primary">SQL Optimizer</h1>
+        <p className="text-sm text-text-secondary">
           Paste a query to get its execution plan and a suggestion. Nothing here is ever executed — read-only
           EXPLAIN and text/DDL output for you to review.
         </p>
       </div>
 
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-6">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-4 rounded-lg border border-border bg-surface p-6">
         <div>
-          <label htmlFor="sql-instance" className="mb-1 block text-sm font-medium text-slate-700">
+          <label htmlFor="sql-instance" className="mb-1 block text-sm font-medium text-text-secondary">
             Database
           </label>
           <select
             id="sql-instance"
             value={instanceId}
             onChange={(e) => setInstanceId(e.target.value)}
-            className="w-full max-w-sm rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className="w-full max-w-sm rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
           >
             {instances.length === 0 && <option value="">No databases onboarded yet</option>}
             {instances.map((i) => (
@@ -112,7 +112,7 @@ export default function SqlOptimizer() {
         </div>
 
         <div>
-          <label htmlFor="sql-query" className="mb-1 block text-sm font-medium text-slate-700">
+          <label htmlFor="sql-query" className="mb-1 block text-sm font-medium text-text-secondary">
             Query
           </label>
           <textarea
@@ -121,17 +121,17 @@ export default function SqlOptimizer() {
             onChange={(e) => setSql(e.target.value)}
             rows={6}
             placeholder="SELECT ..."
-            className="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
+            className="w-full rounded-md border border-border bg-surface-2 px-3 py-2 font-mono text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
           />
         </div>
 
-        {error && <p className="text-sm text-red-600">{error}</p>}
+        {error && <p className="text-sm text-danger">{error}</p>}
 
         <div>
           <button
             type="submit"
             disabled={loading || !instanceId || !sql.trim()}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent/90 disabled:opacity-50"
           >
             {loading ? "Analyzing..." : "Analyze"}
           </button>
@@ -140,41 +140,43 @@ export default function SqlOptimizer() {
 
       {result && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div className="rounded-lg border border-slate-200 bg-white p-6">
-            <h2 className="mb-2 text-sm font-semibold text-slate-900">Execution plan</h2>
-            <pre className="overflow-x-auto rounded bg-slate-50 p-3 text-xs text-slate-700">{renderPlan(result.plan)}</pre>
+          <div className="rounded-lg border border-border bg-surface p-6">
+            <h2 className="mb-2 font-display text-sm font-semibold text-text-primary">Execution plan</h2>
+            <pre className="overflow-x-auto rounded bg-surface-2 p-3 font-mono text-xs text-text-secondary">{renderPlan(result.plan)}</pre>
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-white p-6">
+          <div className="rounded-lg border border-border bg-surface p-6">
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">Suggestion</h2>
-              <span className="text-xs text-indigo-600">
-                AI-generated, confidence: {Math.round(result.confidenceScore * 100)}%
+              <h2 className="font-display text-sm font-semibold text-text-primary">Suggestion</h2>
+              <span className="font-mono text-xs text-accent">
+                confidence: {Math.round(result.confidenceScore * 100)}%
               </span>
             </div>
-            <p className="mb-3 text-sm text-slate-700">{result.explanation}</p>
-            <p className="mb-3 text-xs text-slate-500">Estimated improvement: {result.estimatedImprovementRange}</p>
+            <p className="mb-3 text-sm text-text-primary">{result.explanation}</p>
+            <p className="mb-3 text-xs text-text-secondary">
+              Estimated improvement: <span className="font-mono">{result.estimatedImprovementRange}</span>
+            </p>
 
             {(result.rewrittenQuery || result.indexDdl) && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <p className="text-xs font-medium text-slate-500">
+                  <p className="text-xs font-medium tracking-wide text-text-secondary uppercase">
                     {result.indexDdl ? "Suggested index DDL" : "Suggested rewrite"}
                   </p>
                   <button
                     type="button"
                     onClick={() => handleCopy(ddlToCopy)}
-                    className="text-xs font-medium text-indigo-600 hover:underline"
+                    className="text-xs font-medium text-accent hover:underline"
                   >
                     {copied ? "Copied" : "Copy"}
                   </button>
                 </div>
-                <pre className="overflow-x-auto rounded bg-slate-50 p-3 text-xs text-slate-700">{ddlToCopy}</pre>
+                <pre className="overflow-x-auto rounded bg-surface-2 p-3 font-mono text-xs text-text-secondary">{ddlToCopy}</pre>
               </div>
             )}
 
             {!result.rewrittenQuery && !result.indexDdl && (
-              <p className="text-sm text-slate-400">No rewrite or index suggested.</p>
+              <p className="text-sm text-text-muted">No rewrite or index suggested.</p>
             )}
           </div>
         </div>

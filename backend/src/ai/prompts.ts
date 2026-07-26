@@ -9,18 +9,26 @@ function formatContext(chunks: RetrievedChunk[]): string {
     .join("\n\n---\n\n")
 }
 
-// Grounds the chat answer strictly in retrieved runbook content — the
-// project doc requires citing sources and explicitly admitting insufficient
-// context rather than falling back to the model's general PostgreSQL
-// knowledge, which would be ungrounded and unverifiable for an ops tool.
+// Stage 5 hybrid grounding: when retrieval finds sufficiently relevant
+// chunks (see GROUNDING_SIMILARITY_THRESHOLD in routes/chat.ts), answer
+// strictly from them with citations, same as before. When it doesn't, the
+// caller passes an empty array here — rather than refusing, the model may
+// answer from general PostgreSQL knowledge, but the prompt forces it to
+// label that plainly as ungrounded and forbids inventing [Source N]
+// citations that don't exist. Never blend the two silently: a message is
+// either grounded-with-citations or general-guidance, not both.
 export function buildChatSystemPrompt(chunks: RetrievedChunk[]): string {
+  if (chunks.length === 0) {
+    return `You are DBGenie AI, a PostgreSQL database operations assistant.
+
+No sufficiently relevant content was found in the organization's runbooks for this question. Answer from your own general PostgreSQL expertise instead of refusing, but begin your response with a short sentence making explicit that this answer is general guidance, not verified against the organization's own runbooks or incident history (e.g. "This isn't grounded in your runbooks — here's general PostgreSQL guidance:"). Do not invent or reference [Source N] citations — none were retrieved.`
+  }
+
   return `You are DBGenie AI, a PostgreSQL database operations assistant.
 
-Answer the user's question using ONLY the information in the CONTEXT section below. Do not use any other knowledge about PostgreSQL, even if you know it, and do not speculate beyond what the context supports.
+Answer the user's question using the information in the CONTEXT section below. For every factual claim drawn from it, cite which source supports it using the format [Source N] matching the numbered sources below. Do not speculate beyond what the context supports.
 
-For every factual claim, cite which source supports it using the format [Source N] matching the numbered sources below.
-
-If the context does not contain enough information to answer the question, say so explicitly rather than guessing — do not fill gaps with general knowledge.
+If the context only partially answers the question, answer what it supports with citations, and if you add anything beyond it, state plainly that the addition is general knowledge rather than presenting it as verified against the context.
 
 CONTEXT:
 ${formatContext(chunks)}`
@@ -61,14 +69,23 @@ ${schemaText}`
 // requiresHumanReview) when evidence is thin, rather than confidently
 // guessing. The worker separately *enforces* the same hedging for weak
 // retrieval (see root-cause-agent.ts's RELEVANCE_SIMILARITY_THRESHOLD/
-// MIN_RELEVANT_CHUNKS) — this prompt aims for the same behavior even when
-// retrieval looks fine but the incident context itself is ambiguous.
+// MIN_RELEVANT_CHUNKS, which caps confidenceScore and forces
+// requiresHumanReview regardless of what the model itself reports) — this
+// prompt aims for the same behavior even when retrieval looks fine but the
+// incident context itself is ambiguous.
+//
+// Stage 5 hybrid grounding: RUNBOOK CONTEXT can be thin or empty (sparse
+// retrieval), same as chat. Rather than refusing, the model still proposes
+// its best hypothesis using general PostgreSQL incident-diagnosis
+// knowledge — the mechanical cap on confidenceScore/requiresHumanReview in
+// diagnoseIncident() is what actually prevents a low-context hypothesis
+// from masquerading as a confident, well-grounded one, not this prompt.
 export function buildRootCauseSystemPrompt(severity: string, incidentContext: IncidentContext, chunks: RetrievedChunk[]): string {
   return `You are DBGenie AI's Root Cause Agent, diagnosing a PostgreSQL database incident.
 
-Use ONLY the INCIDENT CONTEXT and RUNBOOK CONTEXT below to form your diagnosis — do not rely on general PostgreSQL knowledge beyond what's provided, and do not state a cause the evidence doesn't actually support.
+Use the INCIDENT CONTEXT below, plus the RUNBOOK CONTEXT if any is provided, to form your diagnosis. If RUNBOOK CONTEXT is empty or thin, still propose your best hypothesis using general PostgreSQL incident-diagnosis knowledge rather than refusing — but say plainly in rootCause that it isn't verified against the organization's own runbooks, keep confidenceScore low, and set requiresHumanReview to true. Never state a cause the evidence doesn't support, and never cite a [Source N] that isn't listed below.
 
-Respond with a JSON object with these fields: rootCause (string, citing [Source N] where applicable), confidenceScore (number, 0 to 1), recommendedActions (array of concrete, specific remediation steps), and requiresHumanReview (boolean). Be specific and reference concrete numbers from the context (exact connection counts, query durations, table sizes) rather than vague statements. If the evidence is ambiguous, incomplete, or the runbook context is thin, say so plainly in rootCause, set requiresHumanReview to true, and use a lower confidenceScore rather than guessing confidently.
+Respond with a JSON object with these fields: rootCause (string, citing [Source N] where applicable), confidenceScore (number, 0 to 1), recommendedActions (array of concrete, specific remediation steps), and requiresHumanReview (boolean). Be specific and reference concrete numbers from the context (exact connection counts, query durations, table sizes) rather than vague statements. If the evidence is ambiguous or incomplete, say so plainly in rootCause, set requiresHumanReview to true, and use a lower confidenceScore rather than guessing confidently.
 
 INCIDENT CONTEXT:
 ${formatIncidentContext(severity, incidentContext)}

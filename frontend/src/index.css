@@ -1,1 +1,53 @@
 @import "tailwindcss";
+
+/*
+ * Stage 5 design tokens. This project runs Tailwind v4 via the
+ * @tailwindcss/vite plugin (no tailwind.config.js — see CLAUDE.md), so
+ * theme customization lives here in CSS via @theme rather than a JS config
+ * file. Each --color-... / --font-... var below generates the matching
+ * utility (e.g. --color-surface-2 -> bg-surface-2, border-surface-2, ...).
+ */
+@theme {
+  --color-background: #0b0f17;
+  --color-surface: #121826;
+  --color-surface-2: #1a2233;
+  --color-border: #232b3d;
+  --color-accent: #2dd4bf;
+  --color-accent-dim: #0f766e;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-text-primary: #e6e9ef;
+  --color-text-secondary: #8b93a7;
+  --color-text-muted: #5b6478;
+
+  --font-display: "Space Grotesk", sans-serif;
+  --font-sans: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-text-primary);
+}
+
+/* Top-bar live pulse waveform (PulseWaveform.tsx): two copies of an
+   identical periodic wave path sit side by side and scroll left by exactly
+   one copy-width on a loop, so the seam between them is invisible. */
+@keyframes pulse-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-200px);
+  }
+}
+
+.animate-pulse-scroll {
+  animation: pulse-scroll 3s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pulse-scroll {
+    animation: none;
+  }
+}

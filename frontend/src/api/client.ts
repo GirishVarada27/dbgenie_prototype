@@ -58,8 +58,8 @@ export const testDatabaseInstanceConnection = (orgId: string, id: string) =>
 export const deleteDatabaseInstance = (orgId: string, id: string) =>
   request<null>(`/orgs/${orgId}/database-instances/${id}`, { method: "DELETE" })
 
-export const fetchDatabaseInstanceMetrics = (orgId: string, id: string) =>
-  request<Metric[]>(`/orgs/${orgId}/database-instances/${id}/metrics`)
+export const fetchDatabaseInstanceMetrics = (orgId: string, id: string, limit?: number) =>
+  request<Metric[]>(`/orgs/${orgId}/database-instances/${id}/metrics${limit ? `?limit=${limit}` : ""}`)
 
 export const fetchIncidents = (orgId: string, status?: string) =>
   request<IncidentWithDatabaseName[]>(`/orgs/${orgId}/incidents${status ? `?status=${status}` : ""}`)

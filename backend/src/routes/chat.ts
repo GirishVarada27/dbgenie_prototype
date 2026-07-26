@@ -15,6 +15,20 @@ const router = Router({ mergeParams: true })
 router.use(requireAuth)
 
 const TOP_K = 5
+// Stage 5 hybrid grounding: below this, retrieved chunks are treated as not
+// relevant enough to cite — the chat answers from general PostgreSQL
+// knowledge instead of refusing, but the response is then never given
+// citations it doesn't actually have (see buildChatSystemPrompt).
+//
+// 0.75 (the spec's example figure) doesn't match voyage-3.5's actual
+// cosine-similarity distribution on this corpus — checked empirically
+// against the seeded runbooks: an on-topic query against its own matching
+// runbook (e.g. "what causes Postgres deadlocks" vs the Deadlocks runbook)
+// scores ~0.65-0.72, while a genuinely unrelated query (e.g. a VARCHAR vs
+// TEXT question) scores ~0.35-0.39. At 0.75 every query would fall back to
+// general guidance and the grounded path would never fire. 0.55 sits
+// between those two clusters with margin on both sides.
+const GROUNDING_SIMILARITY_THRESHOLD = 0.55
 
 router.post("/", requireRole([...ORG_ROLES]), async (req, res) => {
   const orgId = reqParam(req.params.orgId)
@@ -50,7 +64,12 @@ router.post("/", requireRole([...ORG_ROLES]), async (req, res) => {
 
   await db.insert(chatMessages).values({ sessionId, role: "user", content: message, sources: [] })
 
-  const chunks = await retrieveRunbookChunks(message, TOP_K)
+  const allChunks = await retrieveRunbookChunks(message, TOP_K)
+  // pgvector always returns the nearest K neighbors regardless of match
+  // quality, so only chunks that clear the grounding threshold are treated
+  // as real citations — the rest are dropped before the prompt/sources ever
+  // see them, rather than letting a weak match masquerade as grounded.
+  const chunks = allChunks.filter((c) => c.similarity >= GROUNDING_SIMILARITY_THRESHOLD)
   const sources: ChatMessageSource[] = chunks.map((c) => ({ chunkId: c.id, sourceTitle: c.sourceTitle }))
 
   res.setHeader("Content-Type", "text/event-stream")

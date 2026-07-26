@@ -1,28 +1,42 @@
 import { NavLink } from "react-router-dom"
+import { ChatIcon, DatabasesIcon, HealthIcon, IncidentsIcon, SqlIcon } from "./NavIcons"
 
 const NAV_ITEMS = [
-  { to: "/databases", label: "Databases" },
-  { to: "/health", label: "Health" },
-  { to: "/chat", label: "AI Chat" },
-  { to: "/sql-optimizer", label: "SQL Optimizer" },
+  { to: "/databases", label: "Databases", Icon: DatabasesIcon },
+  { to: "/health", label: "Health", Icon: HealthIcon },
+  { to: "/chat", label: "AI Chat", Icon: ChatIcon },
+  { to: "/sql-optimizer", label: "SQL Optimizer", Icon: SqlIcon },
+  { to: "/incidents", label: "Incidents", Icon: IncidentsIcon },
 ]
 
 export default function Sidebar() {
   return (
-    <aside className="w-56 shrink-0 border-r border-slate-200 bg-white px-3 py-4">
-      <div className="px-3 pb-6 text-lg font-semibold text-indigo-600">DBGenie AI</div>
-      <nav className="flex flex-col gap-1">
-        {NAV_ITEMS.map((item) => (
+    <aside className="flex w-56 shrink-0 flex-col border-r border-border bg-surface">
+      <div className="px-5 py-5 font-display text-base font-semibold tracking-tight text-text-primary">
+        DBGenie <span className="text-accent">AI</span>
+      </div>
+      <nav className="flex flex-col gap-0.5 px-2">
+        {NAV_ITEMS.map(({ to, label, Icon }) => (
           <NavLink
-            key={item.to}
-            to={item.to}
+            key={to}
+            to={to}
             className={({ isActive }) =>
-              `rounded-md px-3 py-2 text-sm font-medium ${
-                isActive ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-100"
+              `group relative flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
+                isActive ? "text-text-primary" : "text-text-secondary hover:text-text-primary"
               }`
             }
           >
-            {item.label}
+            {({ isActive }) => (
+              <>
+                <span
+                  className={`absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-accent transition-opacity ${
+                    isActive ? "opacity-100" : "opacity-0"
+                  }`}
+                />
+                <Icon className="h-4 w-4 shrink-0" />
+                <span className="font-medium">{label}</span>
+              </>
+            )}
           </NavLink>
         ))}
       </nav>

@@ -40,14 +40,47 @@ async function main() {
     for (const content of chunks) pending.push({ content, sourceTitle })
   }
 
-  // One embedding request for every chunk across every file, not one
-  // request per file — Voyage's free-tier rate limit (3 requests/min
-  // without a payment method) makes per-file batching fail on anything
-  // more than a couple of runbooks.
-  const embeddings = await embedTexts(
-    pending.map((p) => p.content),
-    "document",
-  )
+  // Batched, but capped per request — Voyage's free tier (no payment
+  // method on file) enforces both 3 requests/minute AND 10K tokens/minute.
+  // A single request for every chunk across every file fit under 10K
+  // tokens with the original 7-runbook seed set, but Stage 5's expanded
+  // 15-runbook corpus (~16K tokens across ~32 chunks) doesn't — it 429s
+  // with "reduced rate limits" even as a single request. Splitting into
+  // ~8K-token batches and pacing them ~21s apart (same spacing
+  // tests/rag-retrieval.test.ts uses) keeps every request under both caps.
+  const MAX_TOKENS_PER_BATCH = 8000
+  const APPROX_CHARS_PER_TOKEN = 4
+  const BATCH_PAUSE_MS = 21_000
+
+  const batches: PendingChunk[][] = []
+  let currentBatch: PendingChunk[] = []
+  let currentBatchTokens = 0
+
+  for (const chunk of pending) {
+    const chunkTokens = Math.ceil(chunk.content.length / APPROX_CHARS_PER_TOKEN)
+    if (currentBatch.length > 0 && currentBatchTokens + chunkTokens > MAX_TOKENS_PER_BATCH) {
+      batches.push(currentBatch)
+      currentBatch = []
+      currentBatchTokens = 0
+    }
+    currentBatch.push(chunk)
+    currentBatchTokens += chunkTokens
+  }
+  if (currentBatch.length > 0) batches.push(currentBatch)
+
+  const embeddings: number[][] = []
+  for (let i = 0; i < batches.length; i++) {
+    if (i > 0) {
+      console.log(`  Pausing ${BATCH_PAUSE_MS / 1000}s to stay under Voyage's free-tier rate limits...`)
+      await new Promise((resolve) => setTimeout(resolve, BATCH_PAUSE_MS))
+    }
+    console.log(`  Embedding batch ${i + 1}/${batches.length} (${batches[i].length} chunk(s))...`)
+    const batchEmbeddings = await embedTexts(
+      batches[i].map((p) => p.content),
+      "document",
+    )
+    embeddings.push(...batchEmbeddings)
+  }
 
   // Re-seedable: clear previously seeded chunks first so re-running after
   // editing a runbook doesn't leave stale duplicates behind. Deleted only

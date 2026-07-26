@@ -12,15 +12,19 @@ what's explicitly deferred. Do not implement a later stage's scope early
 (e.g. don't build metrics collection or AI agents while still on Stage 1
 foundation work) without confirming with the user first.
 
-**All four Phase-1 stages are complete.** Stage 1 (auth, data model, app
-shell); Stage 2 (`PostgresConnector`, metrics, anomaly detection →
-incidents, Databases/Health pages); Stage 3 (RAG-grounded AI chat, Root
-Cause Agent, Gemini + Voyage); Stage 4 (SQL Optimizer, Neon-branch backup
-validation, rate limiting, structured logging, append-only audit log, CI).
-Phase 2 (MongoDB/SQL Server/SAP IQ connectors, capacity forecasting,
-Security agent, multi-tenant billing) hasn't been scoped — don't start it
-without a fresh scoping conversation, per the project doc's own closing
-instruction.
+**All four Phase-1 stages are complete**, plus a Stage 5 that came from a
+follow-up prompt outside the original project doc (not in
+`DBGenie_AI_Phase1_Postgres_Project_Document.md` — see Stage 5 section
+below). Stage 1 (auth, data model, app shell); Stage 2 (`PostgresConnector`,
+metrics, anomaly detection → incidents, Databases/Health pages); Stage 3
+(RAG-grounded AI chat, Root Cause Agent, Gemini + Voyage); Stage 4 (SQL
+Optimizer, Neon-branch backup validation, rate limiting, structured
+logging, append-only audit log, CI); Stage 5 (dark command-center visual
+redesign, verified real-time chat streaming, hybrid grounding, expanded
+runbook corpus). Phase 2 (MongoDB/SQL Server/SAP IQ connectors, capacity
+forecasting, Security agent, multi-tenant billing) hasn't been scoped —
+don't start it without a fresh scoping conversation, per the project doc's
+own closing instruction.
 
 **Stage 3 uses the Gemini API, not Claude**, despite the project doc's
 stack table saying Claude — a mid-build user decision (see README's
@@ -444,4 +448,98 @@ another backend entry point that needs env vars, import
 wrapped in `<RequireAuth>` (`frontend/src/components/RequireAuth.tsx`) at
 the route level, not per-page. The dashboard shell
 (`DashboardLayout`/`Sidebar`/`Topbar`) wraps only the authenticated area;
-`/login`, `/signup`, and `/mfa/enroll` render outside it.
+`/login`, `/signup`, and `/mfa/enroll` render outside it. `/incidents`
+(Stage 5) is its own route/page now — Health previously inlined the full
+incident list/detail interaction; Health now shows metrics plus a compact
+open-incident count per instance that links out to Incidents.
+
+## Stage 5: dark command-center redesign, verified streaming, hybrid grounding
+
+A follow-up prompt (not part of the original project doc) asked for a
+visual redesign, confirmation/fixing of real-time chat streaming, hybrid
+RAG grounding, and an expanded runbook corpus. Scope was explicitly "don't
+restructure the data model, auth, or agent architecture" — this stage is
+UI/prompt/threshold changes only, no schema or route-shape changes.
+
+**Tailwind v4 has no `tailwind.config.js`, so the design tokens live in
+`frontend/src/index.css` via `@theme`, not a JS config file** — this repo
+already runs Tailwind v4 through the `@tailwindcss/vite` plugin (see
+"Monorepo shape" above), and `@theme { --color-surface: ...; --font-mono:
+...; }` is v4's native way to add custom colors/fonts as first-class
+utilities (`bg-surface`, `font-mono`, etc.) without introducing a config
+file the rest of the codebase doesn't use. **A literal `*/` inside a CSS
+comment's prose silently closes the comment early and corrupts everything
+after it until the next real `*/`** — hit this immediately when a comment
+read `--color-*/--font-*` (the `*/` mid-sentence closed the block, and
+lightningcss's minifier then choked on the leftover text as bare CSS
+tokens with a cryptic "Unexpected token Delim('*')" error, not an obvious
+"your comment is malformed" message). Avoid `*/` appearing anywhere inside
+a CSS block comment's text, even unintentionally.
+
+**The chat/SQL-optimizer streaming and buffering was already correct
+before this stage** — `routes/chat.ts` already set the SSE headers, called
+`res.flushHeaders()` before writing, and wrote each Gemini delta via
+`res.write()` as it arrived with no accumulation, and no `compression()`
+middleware exists anywhere in `index.ts` to buffer it. Verified live
+(Network tab + visual token-by-token rendering) that it was already
+streaming correctly. What Stage 5 actually added on top: a typing
+indicator between send and first token, and one automatic retry if the SSE
+stream ends without ever sending a `done`/`error` terminal event
+(`AiChat.tsx`'s `runStream()` tracks this explicitly) — see PART B of the
+Stage 5 prompt for the full diagnostic checklist, most of which was
+already satisfied.
+
+**Hybrid grounding's similarity threshold needed empirical recalibration —
+the prompt's example figure (`cosine > 0.75`) doesn't match voyage-3.5's
+actual distribution on this corpus.** Checked directly against the seeded
+runbooks: an on-topic query against its own matching runbook (e.g. "what
+causes Postgres deadlocks" vs the Deadlocks runbook) scores similarity
+~0.65–0.72; a genuinely unrelated query (e.g. a VARCHAR-vs-TEXT question)
+scores ~0.35–0.39. At 0.75 every query — even a dead-on match — would fall
+back to "general guidance" and the grounded/cited path would never fire in
+practice. `routes/chat.ts`'s `GROUNDING_SIMILARITY_THRESHOLD` is set to
+`0.55` instead, sitting between the two observed clusters with margin on
+both sides. If you re-tune this, verify empirically against this corpus
+rather than trusting a round number — pgvector/cosine similarity scales
+differ by embedding model and aren't comparable across write-ups. Below
+the threshold, `chat.ts` filters those chunks out entirely before building
+`sources`/the system prompt (see `buildChatSystemPrompt` in
+`ai/prompts.ts`), so an empty `sources` array from the `sources` SSE event
+is what the frontend's grounded-vs-general badge (`AiChat.tsx`) keys off
+of — there's no separate "grounded: boolean" flag on the wire.
+
+The Root Cause Agent's existing sparse-retrieval hedge
+(`RELEVANCE_SIMILARITY_THRESHOLD`/`MIN_RELEVANT_CHUNKS` in
+`ai/root-cause-agent.ts`, from Stage 3/4) already capped `confidenceScore`
+and forced `requiresHumanReview` regardless of what the model reported —
+that mechanical enforcement didn't need to change. Only
+`buildRootCauseSystemPrompt` changed, from "use ONLY the provided context"
+to "propose a hypothesis from general knowledge if context is thin, but
+say so plainly" — the existing cap/force logic is what actually prevents
+that hypothesis from masquerading as confident and well-grounded, not the
+prompt wording.
+
+**Seeding the expanded runbook corpus needed request batching that didn't
+exist before** — `scripts/seed-runbooks.ts` originally embedded every
+chunk across every file in one Voyage request (documented rationale:
+avoid the free tier's 3-requests/minute cap). That worked at 7 runbooks
+(~14-16 chunks, comfortably under the free tier's other cap, 10K
+tokens/minute) but 429'd once Stage 5 added 8 more runbooks (16 files, 32
+chunks, ~16K tokens) as a *single* request. Fixed by splitting `pending`
+into ~8K-token batches and pacing them ~21s apart between batches (same
+spacing `tests/rag-retrieval.test.ts` already used for a different
+reason) — only pauses when more than one batch is needed, so the common
+case (small edits to a couple of runbooks) still costs one request.
+`runbooks/` now holds 16 files total: the original 7 plus Stage 5's 8
+(`01-replication-lag.md` through `08-disk-space-exhaustion.md` — numbered
+to avoid colliding with the original set's unnumbered names on overlapping
+topics like deadlocks/replication lag, which are intentionally kept as
+separate, differently-focused files rather than merged).
+
+`PulseWaveform.tsx` (top status bar) is the one piece of Stage 5 that's
+genuinely live-data-driven rather than just restyled: it polls the active
+org's first `active` database instance's recent metrics (reusing the
+existing `GET .../metrics` endpoint, not a new one) every 5s and maps the
+active-connections-to-max-connections ratio onto the wave's vertical
+scale — only the horizontal scroll is a fixed-speed CSS loop
+(`animate-pulse-scroll` in `index.css`), the amplitude itself is real.

@@ -11,16 +11,16 @@ import {
 import type { BackupValidation, DatabaseInstance } from "@dbgenie/shared"
 
 const STATUS_STYLES: Record<DatabaseInstance["status"], string> = {
-  active: "bg-emerald-100 text-emerald-700",
-  pending: "bg-slate-100 text-slate-600",
-  unreachable: "bg-red-100 text-red-700",
-  disabled: "bg-slate-100 text-slate-400",
+  active: "bg-accent/15 text-accent",
+  pending: "bg-surface-2 text-text-secondary",
+  unreachable: "bg-danger/15 text-danger",
+  disabled: "bg-surface-2 text-text-muted",
 }
 
 const VALIDATION_STATUS_STYLES: Record<BackupValidation["status"], string> = {
-  running: "bg-slate-100 text-slate-600",
-  passed: "bg-emerald-100 text-emerald-700",
-  failed: "bg-red-100 text-red-700",
+  running: "bg-surface-2 text-text-secondary",
+  passed: "bg-accent/15 text-accent",
+  failed: "bg-danger/15 text-danger",
 }
 
 const emptyForm = {
@@ -33,6 +33,10 @@ const emptyForm = {
   sslMode: "require",
   neonProjectId: "",
 }
+
+const inputClass =
+  "w-full rounded-md border border-border bg-surface-2 px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
+const labelClass = "mb-1 block text-sm font-medium text-text-secondary"
 
 function BackupValidationPanel({ orgId, instance }: { orgId: string; instance: DatabaseInstance }) {
   const [runs, setRuns] = useState<BackupValidation[] | null>(null)
@@ -76,13 +80,13 @@ function BackupValidationPanel({ orgId, instance }: { orgId: string; instance: D
   const latest = runs?.[0]
 
   return (
-    <div className="mt-2 border-t border-slate-100 pt-2">
+    <div className="mt-2 border-t border-border pt-2">
       <div className="flex items-center gap-2">
         <button
           type="button"
           onClick={handleRun}
           disabled={latest?.status === "running"}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent-dim hover:text-text-primary disabled:opacity-50"
         >
           {latest?.status === "running" ? "Validating..." : "Run backup validation"}
         </button>
@@ -91,39 +95,39 @@ function BackupValidationPanel({ orgId, instance }: { orgId: string; instance: D
             {latest.status}
           </span>
         )}
-        <button type="button" onClick={() => setExpanded((v) => !v)} className="text-xs text-indigo-600 hover:underline">
+        <button type="button" onClick={() => setExpanded((v) => !v)} className="text-xs text-accent hover:underline">
           {expanded ? "Hide history" : "History"}
         </button>
       </div>
 
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+      {error && <p className="mt-1 text-xs text-danger">{error}</p>}
 
       {expanded && (
         <ul className="mt-2 flex flex-col gap-2">
           {runs === null ? (
-            <p className="text-xs text-slate-400">Loading...</p>
+            <p className="text-xs text-text-muted">Loading...</p>
           ) : runs.length === 0 ? (
-            <p className="text-xs text-slate-400">No validation runs yet.</p>
+            <p className="text-xs text-text-muted">No validation runs yet.</p>
           ) : (
             runs.map((run) => (
-              <li key={run.id} className="rounded-md bg-slate-50 p-2 text-xs">
+              <li key={run.id} className="rounded-md bg-surface-2 p-2 text-xs">
                 <div className="flex items-center gap-2">
                   <span className={`rounded-full px-2 py-0.5 font-medium ${VALIDATION_STATUS_STYLES[run.status]}`}>
                     {run.status}
                   </span>
-                  <span className="text-slate-500">{new Date(run.createdAt).toLocaleString()}</span>
+                  <span className="font-mono text-text-secondary">{new Date(run.createdAt).toLocaleString()}</span>
                 </div>
                 {run.status !== "running" && (
-                  <div className="mt-1 text-slate-600">
-                    {run.details.error && <p className="text-red-600">{run.details.error}</p>}
+                  <div className="mt-1 text-text-secondary">
+                    {run.details.error && <p className="text-danger">{run.details.error}</p>}
                     <p>
                       Connectivity: {run.details.connectivityOk ? "ok" : "failed"}
                       {run.details.connectivityMessage ? ` — ${run.details.connectivityMessage}` : ""}
                     </p>
                     {run.details.tableComparisons.length > 0 && (
-                      <ul className="mt-1 flex flex-col gap-0.5">
+                      <ul className="mt-1 flex flex-col gap-0.5 font-mono">
                         {run.details.tableComparisons.map((c) => (
-                          <li key={c.table} className={c.withinTolerance ? "" : "text-red-600"}>
+                          <li key={c.table} className={c.withinTolerance ? "" : "text-danger"}>
                             {c.table}: expected ~{c.expectedRows}, branch had {c.actualRows}
                           </li>
                         ))}
@@ -217,18 +221,18 @@ export default function Databases() {
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <h1 className="mb-1 text-xl font-semibold text-slate-900">Databases</h1>
-        <p className="text-sm text-slate-500">
+        <h1 className="mb-1 font-display text-xl font-semibold text-text-primary">Databases</h1>
+        <p className="text-sm text-text-secondary">
           Connect a Postgres database to start collecting health metrics every 30 seconds.
         </p>
       </div>
 
       <form
         onSubmit={handleSubmit}
-        className="grid max-w-2xl grid-cols-2 gap-4 rounded-lg border border-slate-200 bg-white p-6"
+        className="grid max-w-2xl grid-cols-2 gap-4 rounded-lg border border-border bg-surface p-6"
       >
         <div className="col-span-2">
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-name">
+          <label className={labelClass} htmlFor="db-name">
             Display name
           </label>
           <input
@@ -236,13 +240,13 @@ export default function Databases() {
             required
             value={form.name}
             onChange={(e) => setForm({ ...form, name: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={inputClass}
             placeholder="Production Postgres"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-host">
+          <label className={labelClass} htmlFor="db-host">
             Host
           </label>
           <input
@@ -250,13 +254,13 @@ export default function Databases() {
             required
             value={form.host}
             onChange={(e) => setForm({ ...form, host: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={inputClass}
             placeholder="ep-example.aws.neon.tech"
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-port">
+          <label className={labelClass} htmlFor="db-port">
             Port
           </label>
           <input
@@ -265,12 +269,12 @@ export default function Databases() {
             required
             value={form.port}
             onChange={(e) => setForm({ ...form, port: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={`${inputClass} font-mono`}
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-database">
+          <label className={labelClass} htmlFor="db-database">
             Database
           </label>
           <input
@@ -278,19 +282,19 @@ export default function Databases() {
             required
             value={form.database}
             onChange={(e) => setForm({ ...form, database: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={inputClass}
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-sslmode">
+          <label className={labelClass} htmlFor="db-sslmode">
             SSL mode
           </label>
           <select
             id="db-sslmode"
             value={form.sslMode}
             onChange={(e) => setForm({ ...form, sslMode: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={inputClass}
           >
             <option value="require">require</option>
             <option value="disable">disable</option>
@@ -298,7 +302,7 @@ export default function Databases() {
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-user">
+          <label className={labelClass} htmlFor="db-user">
             User
           </label>
           <input
@@ -306,12 +310,12 @@ export default function Databases() {
             required
             value={form.user}
             onChange={(e) => setForm({ ...form, user: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={inputClass}
           />
         </div>
 
         <div>
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-password">
+          <label className={labelClass} htmlFor="db-password">
             Password
           </label>
           <input
@@ -320,30 +324,30 @@ export default function Databases() {
             required
             value={form.password}
             onChange={(e) => setForm({ ...form, password: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={inputClass}
           />
         </div>
 
         <div className="col-span-2">
-          <label className="mb-1 block text-sm font-medium text-slate-700" htmlFor="db-neon-project">
-            Neon project ID <span className="font-normal text-slate-400">(optional — enables backup validation)</span>
+          <label className={labelClass} htmlFor="db-neon-project">
+            Neon project ID <span className="font-normal text-text-muted">(optional — enables backup validation)</span>
           </label>
           <input
             id="db-neon-project"
             value={form.neonProjectId}
             onChange={(e) => setForm({ ...form, neonProjectId: e.target.value })}
-            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+            className={inputClass}
             placeholder="Only if this database is hosted on Neon"
           />
         </div>
 
-        {error && <p className="col-span-2 text-sm text-red-600">{error}</p>}
+        {error && <p className="col-span-2 text-sm text-danger">{error}</p>}
 
         <div className="col-span-2">
           <button
             type="submit"
             disabled={submitting || !orgId}
-            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="rounded-md bg-accent px-4 py-2 text-sm font-medium text-background hover:bg-accent/90 disabled:opacity-50"
           >
             {submitting ? "Testing connection..." : "Test connection & add"}
           </button>
@@ -351,19 +355,19 @@ export default function Databases() {
       </form>
 
       <div>
-        <h2 className="mb-3 text-sm font-semibold text-slate-700">Onboarded databases</h2>
+        <h2 className="mb-3 text-xs font-medium tracking-wide text-text-secondary uppercase">Onboarded databases</h2>
         {instances === null ? (
-          <p className="text-sm text-slate-500">Loading...</p>
+          <p className="text-sm text-text-secondary">Loading...</p>
         ) : instances.length === 0 ? (
-          <p className="text-sm text-slate-500">No databases yet — add one above.</p>
+          <p className="text-sm text-text-secondary">No databases yet — add one above.</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {instances.map((instance) => (
-              <li key={instance.id} className="rounded-lg border border-slate-200 bg-white px-4 py-3">
+              <li key={instance.id} className="rounded-lg border border-border bg-surface px-4 py-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium text-slate-900">{instance.name}</p>
-                    <p className="text-xs text-slate-500">
+                    <p className="font-medium text-text-primary">{instance.name}</p>
+                    <p className="text-xs text-text-secondary">
                       {instance.engine} · ssl {instance.sslMode}
                     </p>
                   </div>
@@ -375,7 +379,7 @@ export default function Databases() {
                       type="button"
                       disabled={busyId === instance.id}
                       onClick={() => handleTest(instance.id)}
-                      className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-text-secondary transition-colors hover:border-accent-dim hover:text-text-primary disabled:opacity-50"
                     >
                       Test
                     </button>
@@ -383,7 +387,7 @@ export default function Databases() {
                       type="button"
                       disabled={busyId === instance.id}
                       onClick={() => handleDelete(instance.id)}
-                      className="rounded-md border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                      className="rounded-md border border-danger/40 px-3 py-1.5 text-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
                     >
                       Remove
                     </button>

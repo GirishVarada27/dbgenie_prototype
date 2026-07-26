@@ -1,20 +1,32 @@
 import { useEffect, useState } from "react"
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts"
+import { Link } from "react-router-dom"
 import { authClient } from "../lib/auth-client"
-import {
-  fetchDatabaseInstanceMetrics,
-  fetchDatabaseInstances,
-  fetchIncidentRecommendations,
-  fetchIncidents,
-  type IncidentWithDatabaseName,
-} from "../api/client"
-import type { DatabaseInstance, Metric, Recommendation } from "@dbgenie/shared"
+import { fetchDatabaseInstanceMetrics, fetchDatabaseInstances, fetchIncidents, type IncidentWithDatabaseName } from "../api/client"
+import type { DatabaseInstance, Metric } from "@dbgenie/shared"
 
-const SEVERITY_STYLES: Record<string, string> = {
-  low: "bg-slate-100 text-slate-600",
-  medium: "bg-amber-100 text-amber-700",
-  high: "bg-orange-100 text-orange-700",
-  critical: "bg-red-100 text-red-700",
+const SEVERITY_DOT: Record<string, string> = {
+  low: "bg-text-muted",
+  medium: "bg-warning",
+  high: "bg-warning",
+  critical: "bg-danger",
+}
+
+// Recharts renders onto a transparent SVG canvas, so the dark theme comes
+// entirely from the stroke/fill colors passed to each chart element — no
+// Recharts-level "theme" prop exists.
+const CHART_GRID = "#232B3D"
+const CHART_AXIS = "#8B93A7"
+const CHART_LINE_PRIMARY = "#2DD4BF"
+const CHART_LINE_SECONDARY = "#F59E0B"
+
+const TOOLTIP_STYLE = {
+  background: "#121826",
+  border: "1px solid #232B3D",
+  borderRadius: 6,
+  fontSize: 12,
+  fontFamily: "JetBrains Mono, monospace",
+  color: "#E6E9EF",
 }
 
 function chartData(metrics: Metric[], metricName: string) {
@@ -26,95 +38,39 @@ function chartData(metrics: Metric[], metricName: string) {
     }))
 }
 
-function IncidentItem({ incident, orgId }: { incident: IncidentWithDatabaseName; orgId: string }) {
-  const [open, setOpen] = useState(false)
-  const [recommendations, setRecommendations] = useState<Recommendation[] | null>(null)
-
-  async function handleToggle() {
-    const next = !open
-    setOpen(next)
-    if (next && recommendations === null) {
-      const rows = await fetchIncidentRecommendations(orgId, incident.id).catch(() => [])
-      setRecommendations(rows)
-    }
-  }
+function MetricChart({ label, data, color }: { label: string; data: { time: string; value: number }[]; color: string }) {
+  const latest = data.length > 0 ? data[data.length - 1].value : null
 
   return (
-    <li className="rounded-md border border-slate-100 px-2 py-1.5 text-sm">
-      <button type="button" onClick={handleToggle} className="flex w-full items-center gap-2 text-left">
-        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${SEVERITY_STYLES[incident.severity]}`}>
-          {incident.severity}
-        </span>
-        <span className="text-slate-600">{new Date(incident.createdAt).toLocaleString()}</span>
-        {incident.rootCause === null ? (
-          <span className="text-xs text-slate-400">Analyzing...</span>
-        ) : (
-          <span className="text-xs text-indigo-600">
-            AI-generated, confidence: {Math.round((incident.confidenceScore ?? 0) * 100)}%
-          </span>
-        )}
-        {incident.requiresHumanReview && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-            Needs human review
-          </span>
-        )}
-      </button>
-
-      {open && (
-        <div className="mt-2 flex flex-col gap-2 border-t border-slate-100 pt-2">
-          {incident.rootCause ? (
-            <p className="text-sm text-slate-700">{incident.rootCause}</p>
-          ) : (
-            <p className="text-sm text-slate-400">
-              The Root Cause Agent hasn't finished analyzing this incident yet.
-            </p>
-          )}
-
-          {recommendations === null ? (
-            <p className="text-xs text-slate-400">Loading recommendations...</p>
-          ) : recommendations.length > 0 ? (
-            <div>
-              <p className="mb-1 text-xs font-medium text-slate-500">Recommended actions</p>
-              <ul className="flex list-disc flex-col gap-1 pl-4">
-                {recommendations.map((r) => (
-                  <li key={r.id} className="text-sm text-slate-700">
-                    {r.actionText}
-                  </li>
-                ))}
-              </ul>
-              {recommendations[0]?.sources.length > 0 && (
-                <p className="mt-1 text-xs text-slate-400">
-                  Sources: {recommendations[0].sources.map((s) => s.sourceTitle).join(", ")}
-                </p>
-              )}
-            </div>
-          ) : null}
-
-          <p className="text-xs text-slate-400">
-            AI-generated diagnosis — verify before acting, especially when flagged for human review.
-          </p>
-        </div>
-      )}
-    </li>
+    <div>
+      <div className="mb-1 flex items-baseline justify-between">
+        <p className="text-xs font-medium tracking-wide text-text-secondary uppercase">{label}</p>
+        <p className="font-mono text-sm text-text-primary">{latest === null ? "--" : latest}</p>
+      </div>
+      <ResponsiveContainer width="100%" height={140}>
+        <LineChart data={data}>
+          <CartesianGrid stroke={CHART_GRID} strokeOpacity={0.5} vertical={false} />
+          <XAxis dataKey="time" hide />
+          <YAxis width={30} allowDecimals={false} stroke={CHART_AXIS} tick={{ fontSize: 10, fontFamily: "JetBrains Mono, monospace" }} />
+          <Tooltip contentStyle={TOOLTIP_STYLE} labelStyle={{ color: CHART_AXIS }} />
+          <Line type="monotone" dataKey="value" stroke={color} dot={false} strokeWidth={2} />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
   )
 }
 
-function InstanceCard({
-  instance,
-  incidents,
-  orgId,
-}: {
-  instance: DatabaseInstance
-  incidents: IncidentWithDatabaseName[]
-  orgId: string
-}) {
+function InstanceCard({ instance, incidents }: { instance: DatabaseInstance; incidents: IncidentWithDatabaseName[] }) {
   const [metrics, setMetrics] = useState<Metric[] | null>(null)
+  const { data: activeOrg } = authClient.useActiveOrganization()
+  const orgId = activeOrg?.id
 
   useEffect(() => {
+    if (!orgId) return
     let cancelled = false
 
     async function load() {
-      const rows = await fetchDatabaseInstanceMetrics(orgId, instance.id)
+      const rows = await fetchDatabaseInstanceMetrics(orgId!, instance.id)
       if (!cancelled) setMetrics(rows)
     }
 
@@ -130,12 +86,12 @@ function InstanceCard({
   const longestQuery = metrics ? chartData(metrics, "longest_running_query_seconds") : []
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-6">
+    <div className="rounded-lg border border-border bg-surface p-6">
       <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-900">{instance.name}</h3>
+        <h3 className="font-display text-sm font-semibold text-text-primary">{instance.name}</h3>
         <span
           className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
-            instance.status === "active" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+            instance.status === "active" ? "bg-accent/15 text-accent" : "bg-danger/15 text-danger"
           }`}
         >
           {instance.status}
@@ -143,46 +99,36 @@ function InstanceCard({
       </div>
 
       {metrics === null ? (
-        <p className="text-sm text-slate-500">Loading metrics...</p>
+        <p className="text-sm text-text-secondary">Loading metrics...</p>
       ) : metrics.length === 0 ? (
-        <p className="text-sm text-slate-500">No metrics collected yet — first collection runs within 30s.</p>
+        <p className="text-sm text-text-secondary">No metrics collected yet — first collection runs within 30s.</p>
       ) : (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-500">Active connections</p>
-            <ResponsiveContainer width="100%" height={140}>
-              <LineChart data={activeConnections}>
-                <XAxis dataKey="time" hide />
-                <YAxis width={30} allowDecimals={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="value" stroke="#4f46e5" dot={false} strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <div>
-            <p className="mb-1 text-xs font-medium text-slate-500">Longest running query (s)</p>
-            <ResponsiveContainer width="100%" height={140}>
-              <LineChart data={longestQuery}>
-                <XAxis dataKey="time" hide />
-                <YAxis width={30} allowDecimals={false} />
-                <Tooltip />
-                <Line type="monotone" dataKey="value" stroke="#dc2626" dot={false} strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
+          <MetricChart label="Active connections" data={activeConnections} color={CHART_LINE_PRIMARY} />
+          <MetricChart label="Longest running query (s)" data={longestQuery} color={CHART_LINE_SECONDARY} />
         </div>
       )}
 
-      <div className="mt-4">
-        <p className="mb-2 text-xs font-medium text-slate-500">Open incidents</p>
-        {incidents.length === 0 ? (
-          <p className="text-sm text-slate-400">None</p>
-        ) : (
-          <ul className="flex flex-col gap-1.5">
-            {incidents.map((incident) => (
-              <IncidentItem key={incident.id} incident={incident} orgId={orgId} />
-            ))}
-          </ul>
+      <div className="mt-4 flex items-center justify-between border-t border-border pt-3">
+        <div className="flex items-center gap-2">
+          {incidents.length === 0 ? (
+            <span className="text-sm text-text-muted">No open incidents</span>
+          ) : (
+            <>
+              <span className="flex -space-x-0.5">
+                {incidents.slice(0, 5).map((i) => (
+                  <span key={i.id} className={`h-2 w-2 rounded-full ring-2 ring-surface ${SEVERITY_DOT[i.severity]}`} />
+                ))}
+              </span>
+              <span className="font-mono text-sm text-text-primary">{incidents.length}</span>
+              <span className="text-sm text-text-secondary">open incident{incidents.length > 1 ? "s" : ""}</span>
+            </>
+          )}
+        </div>
+        {incidents.length > 0 && (
+          <Link to="/incidents" className="text-xs font-medium text-accent hover:underline">
+            View in Incidents →
+          </Link>
         )}
       </div>
     </div>
@@ -222,15 +168,15 @@ export default function Health() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="mb-1 text-xl font-semibold text-slate-900">Health</h1>
-        <p className="text-sm text-slate-500">Live metrics and open incidents, refreshed every 15 seconds.</p>
+        <h1 className="mb-1 font-display text-xl font-semibold text-text-primary">Health</h1>
+        <p className="text-sm text-text-secondary">Live metrics and open incidents, refreshed every 15 seconds.</p>
       </div>
 
       {!orgId || instances === null ? (
-        <p className="text-sm text-slate-500">Loading...</p>
+        <p className="text-sm text-text-secondary">Loading...</p>
       ) : instances.length === 0 ? (
-        <p className="text-sm text-slate-500">
-          No databases onboarded yet — add one on the <span className="font-medium">Databases</span> page.
+        <p className="text-sm text-text-secondary">
+          No databases onboarded yet — add one on the <span className="font-medium text-text-primary">Databases</span> page.
         </p>
       ) : (
         <div className="flex flex-col gap-6">
@@ -239,7 +185,6 @@ export default function Health() {
               key={instance.id}
               instance={instance}
               incidents={openIncidents.filter((i) => i.dbInstanceId === instance.id)}
-              orgId={orgId}
             />
           ))}
         </div>
